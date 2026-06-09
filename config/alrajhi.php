@@ -56,8 +56,6 @@ return [
             'success',
             'approved',
             'captured',
-            'processing',
-            'voided',
         ],
     ],
 

@@ -6,6 +6,7 @@ use AlRajhi\PaymentGateway\Contracts\ArrayValueResolverContract;
 use AlRajhi\PaymentGateway\Exceptions\PaymentGatewayException;
 use AlRajhi\PaymentGateway\Helpers\EncryptionHelper;
 use AlRajhi\PaymentGateway\Support\PaymentResultHelper;
+use AlRajhi\PaymentGateway\Support\TransactionStatusResolver;
 
 class ResponseProcessor
 {
@@ -17,7 +18,8 @@ class ResponseProcessor
 
     public function __construct(
         protected EncryptionHelper $encryption,
-        protected ArrayValueResolverContract $valueResolver
+        protected ArrayValueResolverContract $valueResolver,
+        protected TransactionStatusResolver $transactionStatusResolver
     ) {}
 
     public function handleResponseData(array $result): array
@@ -33,32 +35,33 @@ class ResponseProcessor
                 }
             }
 
-        $status = class_exists('PaymentResultHelper') ? PaymentResultHelper::extractUnifiedStatus($result) : [];
+        $status = PaymentResultHelper::extractUnifiedStatus($result);
 
-       $statusValue = $data['status'] ?? null;
+        $statusValue = $data['status'] ?? null;
 
-       $hasError = false;
+        $hasError = false;
         foreach (['error', 'errorCode', 'error_code', 'errorText', 'error_text', 'message'] as $errField) {
-            if (!empty($data[$errField])) {
+            if (! empty($data[$errField])) {
                 $hasError = true;
                 break;
             }
         }
-        
-            $resultField = strtolower(trim((string)($data['result'] ?? '')));
-            $successResults = ['1', 'success', 'approved', 'captured', 'processing', 'voided'];
-            $isSuccess = in_array($resultField, array_map('strtolower', $successResults), true);
 
-            $statusFinal = $status['status_final'] ?? 'unknown';
-            $bankStatus  = $status['bank_status'] ?? null;
-            $paymentStatus = match ($statusFinal) {
-                'success'   => 'success',
-                'failed'    => 'failed',
-                'pending'   => 'pending',
-                'voided'    => 'voided',
-                'cancelled' => 'cancelled',
-                default     => $bankStatus ?? 'unknown',
-            };
+        $normalizedResult = $this->transactionStatusResolver->normalize($data['result'] ?? null);
+        $isSuccess = $this->transactionStatusResolver->isSuccessful($normalizedResult)
+            && ! $hasError
+            && ($data['status'] ?? null) !== '2';
+
+        $statusFinal = $status['status_final'] ?? 'unknown';
+        $bankStatus = $status['bank_status'] ?? null;
+        $paymentStatus = match ($statusFinal) {
+            'success' => 'success',
+            'failed' => 'failed',
+            'pending' => 'pending',
+            'voided' => 'voided',
+            'cancelled' => 'cancelled',
+            default => $bankStatus ?? 'unknown',
+        };
 
         $arbFields = [
             'transId', 'date', 'trackId', 'udf1', 'udf2', 'udf3', 'udf4', 'udf5',
@@ -80,10 +83,10 @@ class ResponseProcessor
                 'is_success'    => $isSuccess,
                 'is_failure'    => $hasError || (($status['status_final'] ?? null) === 'failed'),
                 'is_pending'    => ($status['status_final'] ?? null) === 'pending',
-                'is_captured'   => class_exists('PaymentResultHelper') ? PaymentResultHelper::isCaptured($result) : false,
-                'is_authorized' => class_exists('PaymentResultHelper') ? PaymentResultHelper::isAuthorized($result) : false,
-                'is_cancelled'  => class_exists('PaymentResultHelper') ? PaymentResultHelper::isCancelled($result) : false,
-                'is_voided'     => class_exists('PaymentResultHelper') ? PaymentResultHelper::isVoided($result) : false,
+                'is_captured' => PaymentResultHelper::isCaptured($result),
+                'is_authorized' => PaymentResultHelper::isAuthorized($result),
+                'is_cancelled' => PaymentResultHelper::isCancelled($result),
+                'is_voided' => PaymentResultHelper::isVoided($result),
                 'error_code'    => $data['error'] ?? $data['errorCode'] ?? $data['error_code'] ?? null,
                 'error_text'    => $data['errorText'] ?? $data['error_text'] ?? $data['message'] ?? null,
                 'payment_id'    => $data['paymentId'] ?? $data['payment_id'] ?? null,
@@ -208,7 +211,7 @@ class ResponseProcessor
             );
         }
 
-        if (($this->toBool($_ENV['ALRAJHI_ACCEPT_DIRECT_CALLBACK_FIELDS'] ?? true)) === true) {
+        if ($this->toBool(config('alrajhi.response.accept_direct_callback_fields', true)) === true) {
             $normalized = $this->buildDirectTransactionData($gatewayResponseData);
 
             if ($normalized !== null) {
@@ -318,14 +321,9 @@ class ResponseProcessor
 
     protected function isSuccessResult(string $status): bool
     {
-        $normalizedStatus = strtolower(trim($status));
-        $configuredStatuses = (string) ($_ENV['ALRAJHI_SUCCESS_STATUSES'] ?? '1,success,approved,captured,processing,voided');
-        $configuredSuccessfulStatuses = array_map(
-            static fn(string $statusValue): string => strtolower(trim($statusValue)),
-            array_filter(array_map('trim', explode(',', $configuredStatuses)))
+        return $this->transactionStatusResolver->isSuccessful(
+            $this->transactionStatusResolver->normalize($status)
         );
-
-        return in_array($normalizedStatus, $configuredSuccessfulStatuses, true);
     }
 
     protected function toBool(mixed $value): bool

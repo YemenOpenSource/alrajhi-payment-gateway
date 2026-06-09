@@ -1,119 +1,161 @@
-<?php
-
-namespace AlRajhi\PaymentGateway\Support;
-
-class PaymentResultHelper
-{
-
-    /**
-     * Unified status extraction for payment result.
-     * Returns array: [status_final, system_status, bank_status]
-     * status_final: success | failed | pending | unknown
-     * system_status: success | failed | pending
-     * bank_status: raw status from bank
-     */
-    public static function extractUnifiedStatus(array $result): array
-    {
-        $data = isset($result['trandata_decoded']) && is_array($result['trandata_decoded']) ? $result['trandata_decoded'] : $result;
-        $error = $data['error'] ?? $data['errorCode'] ?? $data['error_code'] ?? null;
-        $errorText = $data['errorText'] ?? $data['error_text'] ?? $data['message'] ?? null;
-        $status = $data['status'] ?? null;
-        $resultField = $data['result'] ?? null;
-        $actionCode = $data['actionCode'] ?? $data['action_code'] ?? null;
-        $bankStatus = $resultField ?? $actionCode ?? $status;
-
-        // منطق الدليل الرسمي
-        if (!empty($error) || !empty($errorText) || $status === '2') {
-            $statusFinal = 'failed';
-            $systemStatus = 'failed';
-        } elseif ($status === '1' && !empty($resultField)) {
-            $statusFinal = 'success';
-            $systemStatus = 'success';
-        } elseif (strtolower((string)$resultField) === 'processing' || strtolower((string)$status) === 'processing') {
-            $statusFinal = 'pending';
-            $systemStatus = 'pending';
-        } else {
-            $statusFinal = 'unknown';
-            $systemStatus = 'pending';
-        }
-
-        return [
-            'status_final' => $statusFinal,
-            'system_status' => $systemStatus,
-            'bank_status' => $bankStatus,
-        ];
-    }
-
-
-    protected static function getField($result, $key)
-    {
-        if (isset($result[$key])) {
-            return $result[$key];
-        }
-        if (isset($result['trandata_decoded']) && is_array($result['trandata_decoded']) && isset($result['trandata_decoded'][$key])) {
-            return $result['trandata_decoded'][$key];
-        }
-        return null;
-    }
-
-    public static function isSuccess(array $result): bool
-    {
-        $val = self::getField($result, 'result');
-        if ($val === null) {
-            $val = self::getField($result, 'actionCode'); // بعض البنوك تستخدم actionCode
-        }
-        return in_array(strtolower((string)$val), [
-            '1','success','approved','captured','processing','voided',
-        ]);
-    }
-
-    public static function isFailure(array $result): bool
-    {
-        $errorFields = [
-            'error', 'errorCode', 'error_code', 'errorText', 'error_text', 'message'
-        ];
-        foreach ($errorFields as $field) {
-            $val = self::getField($result, $field);
-            if ($val !== null && $val !== '') {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static function isCaptured(array $result): bool
-    {
-        $val = self::getField($result, 'action_code');
-        if ($val === null) {
-            $val = self::getField($result, 'actionCode');
-        }
-        return in_array((string)$val, ['1','captured']);
-    }
-
-    public static function isAuthorized(array $result): bool
-    {
-        $val = self::getField($result, 'action_code');
-        if ($val === null) {
-            $val = self::getField($result, 'actionCode');
-        }
-        return in_array((string)$val, ['0','authorized']);
-    }
-
-    public static function isPending(array $result): bool
-    {
-        $val = self::getField($result, 'result');
-        return strtolower((string)$val) === 'processing';
-    }
-
-    public static function isCancelled(array $result): bool
-    {
-        $val = self::getField($result, 'result');
-        return strtolower((string)$val) === 'cancelled';
-    }
-
-    public static function isVoided(array $result): bool
-    {
-        $val = self::getField($result, 'result');
-        return strtolower((string)$val) === 'voided';
-    }
-}
+<?php
+
+namespace AlRajhi\PaymentGateway\Support;
+
+class PaymentResultHelper
+{
+    protected static ?TransactionStatusResolver $resolver = null;
+
+    protected static function resolver(): TransactionStatusResolver
+    {
+        return self::$resolver ??= new TransactionStatusResolver();
+    }
+
+    /**
+     * Unified status extraction for payment result.
+     * Returns array: [status_final, system_status, bank_status]
+     * status_final: success | failed | pending | voided | cancelled | unknown
+     */
+    public static function extractUnifiedStatus(array $result): array
+    {
+        $data = isset($result['trandata_decoded']) && is_array($result['trandata_decoded'])
+            ? $result['trandata_decoded']
+            : $result;
+
+        $error = $data['error'] ?? $data['errorCode'] ?? $data['error_code'] ?? null;
+        $errorText = $data['errorText'] ?? $data['error_text'] ?? $data['message'] ?? null;
+        $status = $data['status'] ?? null;
+        $resultField = $data['result'] ?? null;
+        $actionCode = $data['actionCode'] ?? $data['action_code'] ?? null;
+        $bankStatus = $resultField ?? $actionCode ?? $status;
+
+        $resolver = self::resolver();
+        $normalizedResult = $resolver->normalize($resultField);
+        $normalizedStatus = $resolver->normalize($status);
+        $classification = $resolver->classify($normalizedResult ?? $normalizedStatus);
+
+        if (! empty($error) || ! empty($errorText) || $status === '2') {
+            $statusFinal = 'failed';
+            $systemStatus = 'failed';
+        } elseif ($classification === 'success') {
+            $statusFinal = 'success';
+            $systemStatus = 'success';
+        } elseif ($classification === 'pending') {
+            $statusFinal = 'pending';
+            $systemStatus = 'pending';
+        } elseif ($classification === 'voided') {
+            $statusFinal = 'voided';
+            $systemStatus = 'voided';
+        } elseif ($classification === 'cancelled') {
+            $statusFinal = 'cancelled';
+            $systemStatus = 'cancelled';
+        } elseif ($classification === 'failure') {
+            $statusFinal = 'failed';
+            $systemStatus = 'failed';
+        } elseif ($status === '1' && $resolver->isSuccessful($normalizedResult)) {
+            $statusFinal = 'success';
+            $systemStatus = 'success';
+        } else {
+            $statusFinal = 'unknown';
+            $systemStatus = 'pending';
+        }
+
+        return [
+            'status_final' => $statusFinal,
+            'system_status' => $systemStatus,
+            'bank_status' => $bankStatus,
+        ];
+    }
+
+    protected static function getField(array $result, string $key): mixed
+    {
+        if (isset($result[$key])) {
+            return $result[$key];
+        }
+
+        if (isset($result['trandata_decoded']) && is_array($result['trandata_decoded']) && isset($result['trandata_decoded'][$key])) {
+            return $result['trandata_decoded'][$key];
+        }
+
+        return null;
+    }
+
+    protected static function getResultStatus(array $result): ?string
+    {
+        $resolver = self::resolver();
+        $resultField = self::getField($result, 'result');
+        $statusField = self::getField($result, 'status');
+
+        return $resolver->normalize($resultField ?? $statusField);
+    }
+
+    public static function isSuccess(array $result): bool
+    {
+        if (self::isFailure($result)) {
+            return false;
+        }
+
+        return self::resolver()->isSuccessful(self::getResultStatus($result));
+    }
+
+    public static function isFailure(array $result): bool
+    {
+        $errorFields = [
+            'error', 'errorCode', 'error_code', 'errorText', 'error_text', 'message',
+        ];
+
+        foreach ($errorFields as $field) {
+            $val = self::getField($result, $field);
+            if ($val !== null && $val !== '') {
+                return true;
+            }
+        }
+
+        $status = self::getField($result, 'status');
+        if ((string) $status === '2') {
+            return true;
+        }
+
+        return self::resolver()->isFailure(self::getResultStatus($result));
+    }
+
+    public static function isCaptured(array $result): bool
+    {
+        $normalized = self::getResultStatus($result);
+
+        if (self::resolver()->isCaptured($normalized)) {
+            return true;
+        }
+
+        $actionCode = self::getField($result, 'action_code') ?? self::getField($result, 'actionCode');
+
+        return in_array((string) $actionCode, ['1', 'captured'], true);
+    }
+
+    public static function isAuthorized(array $result): bool
+    {
+        if (self::resolver()->isAuthorized(self::getResultStatus($result))) {
+            return true;
+        }
+
+        $actionCode = self::getField($result, 'action_code') ?? self::getField($result, 'actionCode');
+
+        return in_array((string) $actionCode, ['4', 'authorized'], true);
+    }
+
+    public static function isPending(array $result): bool
+    {
+        return self::resolver()->isPending(self::getResultStatus($result));
+    }
+
+    public static function isCancelled(array $result): bool
+    {
+        return self::resolver()->isCancelled(self::getResultStatus($result));
+    }
+
+    public static function isVoided(array $result): bool
+    {
+        return self::resolver()->isVoided(self::getResultStatus($result));
+    }
+}
+
