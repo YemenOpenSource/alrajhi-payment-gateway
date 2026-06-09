@@ -253,36 +253,146 @@ Route::post('/api/payment/failed', function (Request $request) {
 });
 ```
 
-**Successful payment response:**
+### Real callback response examples
+
+These are actual responses from `POST /api/payment/success` after processing with `handleResponse()` + `handleResponseData()`.
+
+#### ✅ Successful payment (`CAPTURED`)
 
 ```json
 {
   "status_final": "success",
+  "system_status": "success",
   "bank_status": "CAPTURED",
-  "payment_status": "success",
+  "transId": 261601331202919,
+  "date": "0609",
+  "udf1": "",
+  "udf2": "",
+  "udf3": "",
+  "udf4": "",
+  "udf5": "",
+  "authRespCode": "00",
+  "authCode": "000000",
+  "custid": null,
+  "actionCode": "1",
+  "ref": "616094017404",
+  "result": "CAPTURED",
+  "status": null,
   "is_success": true,
+  "is_failure": false,
+  "is_pending": false,
   "is_captured": true,
-  "payment_id": "600202616049354939",
-  "track_id": "TRK-20260609095147-9076",
+  "is_authorized": false,
+  "is_cancelled": false,
+  "is_voided": false,
+  "error_code": null,
+  "error_text": null,
+  "payment_id": "600202616099491275",
+  "track_id": "TRK-20260609103015-9910",
   "amount": "1.0",
   "card_type": "MASTERCARD",
-  "result": "CAPTURED"
+  "card": "510510XXXXXX5100",
+  "expMonth": "12",
+  "expYear": "2027",
+  "payment_status": "success"
 }
 ```
 
-**Failed payment response:**
+> `actionCode: "1"` = purchase transaction type. `result: "CAPTURED"` = actual payment outcome.
+
+#### ❌ Failed — 3DS not authenticated (`IPAY0100357`)
+
+Customer did not complete card authentication (3DS). `bank_status` is `null` and `is_captured` is `false` even though `actionCode` is `"1"`.
 
 ```json
 {
   "status_final": "failed",
+  "system_status": "failed",
   "bank_status": null,
-  "payment_status": "failed",
+  "transId": null,
+  "date": null,
+  "udf1": "",
+  "udf2": "",
+  "udf3": "",
+  "udf4": "",
+  "udf5": "",
+  "authRespCode": null,
+  "authCode": null,
+  "custid": null,
+  "actionCode": "1",
+  "ref": null,
+  "result": null,
+  "status": null,
   "is_success": false,
+  "is_failure": true,
+  "is_pending": false,
   "is_captured": false,
-  "error_code": "IPAY0100260",
-  "error_text": "!ERROR!-IPAY0100260-Payment option(s) not enabled"
+  "is_authorized": false,
+  "is_cancelled": false,
+  "is_voided": false,
+  "error_code": "IPAY0100357",
+  "error_text": "!ERROR!-IPAY0100357-NOT AUTHENTICATED",
+  "payment_id": "600202616099692365",
+  "track_id": "TRK-20260609102333-4086",
+  "amount": "1.0",
+  "card_type": "VISA",
+  "card": null,
+  "expMonth": null,
+  "expYear": null,
+  "payment_status": "failed"
 }
 ```
+
+#### ❌ Failed — payment option not enabled (`IPAY0100260`)
+
+Terminal configuration issue in the ARB merchant portal — enable Visa / Mastercard / MADA for the terminal.
+
+```json
+{
+  "status_final": "failed",
+  "system_status": "failed",
+  "bank_status": null,
+  "transId": null,
+  "date": null,
+  "udf1": "",
+  "udf2": "",
+  "udf3": "",
+  "udf4": "",
+  "udf5": "",
+  "authRespCode": null,
+  "authCode": null,
+  "custid": null,
+  "actionCode": "1",
+  "ref": null,
+  "result": null,
+  "status": null,
+  "is_success": false,
+  "is_failure": true,
+  "is_pending": false,
+  "is_captured": false,
+  "is_authorized": false,
+  "is_cancelled": false,
+  "is_voided": false,
+  "error_code": "IPAY0100260",
+  "error_text": "!ERROR!-IPAY0100260-Payment option(s) not enabled",
+  "payment_id": "600202616000417166",
+  "track_id": "TRK-20260609102712-8561",
+  "amount": "1.0",
+  "card_type": null,
+  "card": null,
+  "expMonth": null,
+  "expYear": null,
+  "payment_status": "failed"
+}
+```
+
+| Response | Key fields to check | Meaning |
+|----------|---------------------|---------|
+| Success | `result: "CAPTURED"`, `is_captured: true` | Payment completed |
+| Auth failed | `error_code: "IPAY0100357"`, `bank_status: null` | 3DS authentication failed |
+| Config error | `error_code: "IPAY0100260"`, `bank_status: null` | Enable card types in ARB portal |
+
+> **Important:** Never use `actionCode` alone to determine payment success. Always check `result`, `bank_status`, and `is_captured`.
 
 ---
 
