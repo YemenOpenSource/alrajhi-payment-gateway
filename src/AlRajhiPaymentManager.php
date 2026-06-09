@@ -7,6 +7,7 @@ use AlRajhi\PaymentGateway\Services\ApplePayService;
 use AlRajhi\PaymentGateway\Services\BankHostedService;
 use AlRajhi\PaymentGateway\Services\FasterCheckoutService;
 use AlRajhi\PaymentGateway\Services\IframeService;
+use AlRajhi\PaymentGateway\Services\InquiryService;
 use AlRajhi\PaymentGateway\Services\WebhookService;
 
 class AlRajhiPaymentManager
@@ -63,6 +64,15 @@ class AlRajhiPaymentManager
         }
 
         return $this->services['webhook'];
+    }
+
+    public function inquiry(): InquiryService
+    {
+        if (! isset($this->services['inquiry'])) {
+            $this->services['inquiry'] = app(InquiryService::class);
+        }
+
+        return $this->services['inquiry'];
     }
 
     public function binCheck(string $bin): array

@@ -1,19 +1,27 @@
 ![alt text](1.png)
+
 # AlRajhi Payment Gateway (Laravel Package)
 
-Lightweight Laravel package for Al Rajhi Bank Payment Gateway integration.
+Laravel package for integrating with Al Rajhi Bank payment gateway — compatible with **ARB Merchant Integration Guide REST v1.31**.
 
-## What this package provides
+---
 
-- Bank Hosted payment initiation
-- Faster Checkout support
-- Iframe support
-- Apple Pay (Bank Hosted path)
-- Webhook processing service
-- BIN check helper
-- Unified response normalization and exception shape
-- UDF1..UDF10 forwarding + validation
-- Clean internal architecture (orchestrators + dedicated services)
+## Features
+
+| Feature | Status |
+|---------|--------|
+| Bank Hosted — payment initiation | ✅ |
+| Faster Checkout | ✅ |
+| Iframe | ✅ |
+| Apple Pay (Bank Hosted) | ✅ |
+| Webhook — ARB notification handling | ✅ |
+| Callback — `trandata` decryption | ✅ |
+| BIN Check | ✅ |
+| Payment status classification (CAPTURED / NOT CAPTURED / …) | ✅ |
+| Inquiry API (`action=8`) | ✅ |
+| Void / Refund / Capture | ❌ Coming soon |
+
+---
 
 ## Installation
 
@@ -22,9 +30,9 @@ composer require alrajhi/payment-gateway
 php artisan vendor:publish --tag=alrajhi-config
 ```
 
-## Configuration
+---
 
-Set these values in your `.env`:
+## Configuration (`.env`)
 
 ```env
 ALRAJHI_BASE_URL=https://securepayments.alrajhibank.com.sa
@@ -33,7 +41,6 @@ ALRAJHI_TRANPORTAL_ID=your_tranportal_id
 ALRAJHI_TRANPORTAL_PASSWORD=your_password
 ALRAJHI_RESOURCE_KEY=your_resource_key
 
-# Compatibility toggles for trandata encryption/decryption
 ALRAJHI_URL_ENCODE_BEFORE_ENCRYPT=false
 ALRAJHI_URL_DECODE_AFTER_DECRYPT=false
 ALRAJHI_RETRY_RAW_TRANDATA_ON_INVALID=true
@@ -45,248 +52,443 @@ ALRAJHI_WEBHOOK_SECRET=your_webhook_secret
 ALRAJHI_STRICT_RESPONSE_MODE=false
 ALRAJHI_ACCEPT_QUERY_RESPONSE=true
 ALRAJHI_ACCEPT_DIRECT_CALLBACK_FIELDS=true
-ALRAJHI_SUCCESS_STATUSES=1,success,approved,captured,processing,voided
 
 ALRAJHI_PREFER_CATALOG_MESSAGE=true
 ALRAJHI_INCLUDE_OFFICIAL_MESSAGE=true
-
 ALRAJHI_UDF_AUTO_FILL_DEFAULTS=false
 ALRAJHI_CAPTURE_AUTO_SET_UDF7_R=true
 ```
 
-## Quick start
+> **Important (v1.31):** Every gateway request must include `X-FORWARDED-FOR` with the customer IP first. The package sets this automatically when calling `initiate()`.
+
+---
+
+## Initiate Payment (Bank Hosted)
 
 ```php
 use AlRajhi\PaymentGateway\Facades\AlRajhiPayment;
+use Illuminate\Http\Request;
 
 Route::post('/test-payment', function (Request $request) {
     $trackId = 'TRK-' . now()->format('YmdHis') . '-' . random_int(1000, 9999);
 
-    try {
-        $payment = AlRajhiPayment::bankHosted()->initiate([
-            'id' => env('ALRAJHI_TRANPORTAL_ID'),
-            'password' => env('ALRAJHI_TRANPORTAL_PASSWORD'),
-            'amount' => '400.00',
-            'action' => '1',
-            'currencyCode' => '682',
-            'trackId' => $trackId,
-            'responseURL' => env('ALRAJHI_RESPONSE_URL'),
-            'errorURL' => env('ALRAJHI_ERROR_URL'),
-            'response_url' => env('ALRAJHI_RESPONSE_URL'),
-            'error_url' => env('ALRAJHI_ERROR_URL'),
-            'customerIp' => $request->ip(),
-        ]);
+    $forwardedFor = $request->header('X-Forwarded-For');
+    $customerIp = is_string($forwardedFor) && $forwardedFor !== ''
+        ? trim(explode(',', $forwardedFor)[0])
+        : $request->ip();
 
-        return response()->json([
-            'success' => true,
-            'payment' => $payment,
-        ]);
-    } catch (\Throwable $e) {
-        return response()->json([
-            'success' => false,
-            'error' => $e->getMessage(),
-            'exception' => get_class($e),
-        ], 500);
-    }
+    $payment = AlRajhiPayment::bankHosted()->initiate([
+        'id' => config('alrajhi.credentials.tranportal_id'),
+        'password' => config('alrajhi.credentials.tranportal_password'),
+        'amount' => '1.00',
+        'action' => '1',           // 1 = Purchase, 4 = Authorization
+        'currencyCode' => '682',
+        'trackId' => $trackId,
+        'responseURL' => config('alrajhi.callbacks.response_url'),
+        'errorURL' => config('alrajhi.callbacks.error_url'),
+        'customerIp' => $customerIp,
+    ]);
+
+    return response()->json(['data' => $payment]);
 });
 ```
 
-Test Success response shape:
+**Successful response:**
 
-```php
-[
-         "success": true,
-        "payment_id": "60000260000768000",
-        "payment_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm",
-        "redirect_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm?PaymentID=60000260000768",
-        "track_id": "TRK-20260402093943-8348"
-]
-```
-Live Success response shape:
-
-```php
-[
-        "success": true,
-        "payment_id": "700202609733477641",
-        "payment_url": "https://digitalpayments.neoleap.com.sa/pg/paymentpage.htm",
-        "redirect_url": "https://digitalpayments.neoleap.com.sa/pg/paymentpage.htm?PaymentID=700202609733477641",
-        "track_id": "TRK-20260407130233-4761"
-]
+```json
+{
+  "success": true,
+  "payment_id": "600202616049354939",
+  "payment_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm",
+  "redirect_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm?PaymentID=600202616049354939",
+  "track_id": "TRK-20260609095147-9076"
+}
 ```
 
-## Flow Charts
+Redirect the customer to `redirect_url` to complete payment.
 
-### 1) Payment flow (Bank Hosted)
+---
+
+## Recommended Payment Flow
+
+```
+1. initiate()          → Get redirect_url
+2. Customer pays       → On ARB payment page
+3. Callback            → UX only — do NOT finalize DB updates here
+4. Webhook             → Update order in database (source of truth)
+5. Inquiry (action=8)  → Server-side fallback (if Webhook is delayed or for reconciliation)
+```
+
+### When should payment status be updated?
+
+| Stage | When does it happen? | Update DB? | Role |
+|-------|----------------------|------------|------|
+| **Callback** (`success` / `failed`) | When customer returns from ARB page | ❌ No | Show message to user only |
+| **Webhook** | Usually before or after callback (async) | ✅ **Yes — here** | Official source of truth |
+| **Inquiry** | On demand from server (Job / Admin) | ✅ Yes (fallback) | If Webhook is missing or for reconciliation |
+
+> **Do not call Inquiry on every success/failed callback** — it slows the page and duplicates what Webhook already does.  
+> Professional pattern: Callback for UX → Webhook for DB update → Inquiry only on delay or reconciliation.
 
 ```mermaid
-flowchart TD
-    A[Merchant Backend: initiate] --> B[Prepare payload\ncallbacks + customer_ip + UDF defaults]
-    B --> C[Encrypt trandata\nAES-256-CBC + IV]
-    C --> D[Send token request to ARB\nwith X-FORWARDED-FOR]
-    D --> E{Initial status == success?}
-    E -- No --> F[Throw PaymentGatewayException]
-    E -- Yes --> G[Receive paymentId:paymentUrl]
-    G --> H[Build redirect_url with PaymentID]
-    H --> I[Customer pays on ARB page]
-    I --> J[Merchant callback receives final response]
-    J --> K{Has trandata?}
-    K -- Yes --> L[Decrypt + normalize result]
-    K -- No --> M[Fallback parse top-level fields]
-    L --> N[Use helpers: isSuccess/isCaptured/...]
-    M --> N
+sequenceDiagram
+    participant User as Customer
+    participant ARB as ARB
+    participant Callback as success/failed
+    participant Webhook as /webhook
+    participant DB as Database
+    participant Inquiry as Inquiry API
+
+    User->>ARB: Pays
+    ARB->>Callback: Redirect (UX only)
+    ARB->>Webhook: Async notification
+    Webhook->>DB: Update status (paid/failed)
+    Note over Inquiry,DB: Inquiry only if Webhook is delayed<br/>or via daily reconciliation job
+    Inquiry->>ARB: action=8
+    Inquiry->>DB: Fallback update
 ```
 
-### 2) Webhook flow
+---
 
-```mermaid
-flowchart TD
-    A[ARB sends webhook] --> B[WebhookService.process]
-    B --> C[Verify signature\nif secret configured]
-    C --> D[Resolve payload/result nodes]
-    D --> E{Status is success or pending?}
-    E -- Yes --> F[Map normalized transaction data]
-    F --> G[Run success callback]
-    E -- No --> H[Map failure payload]
-    H --> I[Run failure callback]
-    G --> J[Return status=1 ack]
-    I --> J
-```
+## Webhook (source of truth for order updates)
 
-## Response handling behavior
-
-- First priority is `trandata` (decrypt and parse it).
-- If `trandata` is missing, fallback to top-level fields (`ErrorText`, `Error`, etc.).
-- Accepts JSON arrays/objects and query-string-like payloads.
-- Key names are normalized (`paymentId/paymentid`, `errorText/errortext`, `trackId/trackid`).
-
-## UDF policy
-
-- Supports `udf1` to `udf10` in request and normalized response.
-- Each UDF must be scalar and max length 255.
-- Auto defaults for missing `udf1..udf5` (when enabled):
-  - `udf1 = order:{order_id|track_id}`
-  - `udf2 = customer:{customer_id}`
-  - `udf3 = channel:{channel}` (default `web`)
-  - `udf4 = source:{source}` (default `bank_hosted`, `iframe` for iframe flow)
-  - `udf5 = ref:{reference_type}` (default `TrackID`)
-- Capture compliance:
-  - For `action=5`, auto-set `udf7=R` (non-saved-card capture) when missing and enabled.
-  - For `action=5`, `udf10` (if provided) must be `PARTIALCAPTURE` or `FINALCAPTURE`.
-
-## Callback vs Webhook (recommended pattern)
-
-- Always use webhook as the **single source of truth** for order/payment updates.
-- Use `paymentCallback` for UX only (redirect page/message), not for final state changes.
-
-## Handling callback result (UX only)
-
-```php
-// webhook endpoint for testing callback handling
-Route::post('/payment/success', function (Request $request) {
-    $result = AlRajhiPayment::bankHosted()->handleResponse($request->all());
-    $GetResult = AlRajhiPayment::bankHosted()->handleResponseData($result);
-
-    // منطق تحديد الحالة الموحدة
-    $statusFinal = $GetResult['status_final'] ?? 'unknown';
-    $bankStatus  = $GetResult['bank_status'] ?? null;
-
-    $paymentStatus = match ($statusFinal) {
-        'success'   => 'success',
-        'failed'    => 'failed',
-        'pending'   => 'pending',
-        'voided'    => 'voided',
-        'cancelled' => 'cancelled',
-        default     => $bankStatus ?? 'unknown',
-    };
-
-    // Payment::update([...], ['status' => $paymentStatus]);
-    // Order::update([...], ['status' => ...]);
-
-    return response()->json(array_merge($GetResult, [
-        'payment_status' => $paymentStatus,
-    ]));
-
-});
-Route::post('/payment/failed', function (Request $request) {
-
-    Log::info('Payment failed callback received', $request->all());
-});
-
-
-
-// Recommended in callback: return message/view only
-// Do NOT finalize order/payment status here.
-```
-
-## Update order and payment records (Webhook-driven)
-
-Use your own models, and update states only inside webhook handlers.
-
-```php
-#As Test I made it in the Route.php 
-use AlRajhi\PaymentGateway\Facades\AlRajhiPayment;
-Route::post('/webhook', function (Request $request) {
-    $payload = $request->all();
-
-    // تسجيل البيانات للمتابعة
-    Log::info('AlRajhi Webhook received', $payload);
-
-    // استخراج أهم الحقول
-    $result    = $payload['result'][0] ?? [];
-    $payLoad   = $payload['payLoad'][0] ?? [];
-    $type      = $payload['type'] ?? null;
-    $trackId   = $payLoad['trackId'] ?? null;
-    $paymentId = $payLoad['paymentId'] ?? null;
-    $status    = $result['status'] ?? ($result['error'] ?? null);
-
-    // Payment::where('track_id', $trackId)->update([...]);
-    // Order::where('payment_id', $paymentId)->update([...]);
-
-    return response()->json([['status' => '1']]);
-});
-```
-
-## Webhook endpoint (primary)
-
-The package registers:
+The package registers automatically:
 
 ```text
 POST /alrajhi/webhook
 ```
 
-Implementation example is already provided in:
-
-- `Update order and payment records (Webhook-driven)`
-
-## Callback endpoint (secondary / UX only)
-
-Use callback endpoint to show user-facing result page or redirect logic only.
-Do not make final order/payment updates here.
-
-## BIN check
+**Example in your application:**
 
 ```php
-$binData = AlRajhiPayment::binCheck('515735');
+Route::post('/webhook', function (Request $request) {
+    $rawBody = (string) $request->getContent();
+    $decoded = json_decode($rawBody, true);
+    $payload = is_array($decoded) ? $decoded : $request->all();
+
+    $ack = AlRajhiPayment::webhook()->process(
+        $payload,
+        function (array $data, string $type): void {
+            // Successful or pending payment
+            if ($data['payment_outcome'] === 'success') {
+                // Payment::where('track_id', $data['track_id'])
+                //     ->update(['status' => 'paid', 'payment_id' => $data['payment_id']]);
+            }
+
+            if ($data['payment_outcome'] === 'pending') {
+                // Payment::where('track_id', $data['track_id'])
+                //     ->update(['status' => 'processing']);
+            }
+        },
+        function (array $errorData, string $type): void {
+            // Failed payment
+            // Payment::where('track_id', $errorData['transaction_data']['track_id'] ?? null)
+            //     ->update(['status' => 'failed']);
+        }
+    );
+
+    // ARB requires this exact format
+    return response()->json($ack); // [{"status":"1"}]
+});
 ```
 
-## Troubleshooting IPAY0100013 (Invalid transaction data)
+**Important fields in `$transactionData`:**
 
-When the gateway returns `IPAY0100013`, validate these items exactly:
+| Field | Description |
+|-------|-------------|
+| `payment_outcome` | `success` \| `failure` \| `pending` \| `voided` \| `cancelled` |
+| `normalized_status` | `CAPTURED`, `NOT CAPTURED`, `APPROVED`, … |
+| `track_id` | Your unique reference |
+| `payment_id` | ARB payment ID |
+| `transaction_id` | ARB `transId` |
+| `amount` | Transaction amount |
 
-- Endpoint URL must be your assigned gateway host (many merchants currently use `https://securepayments.neoleap.com.sa`).
-- Required transaction fields must be present with exact meaning:
-  - `id` (tranportal id)
-  - `password` (tranportal password)
-  - `action=1`
-  - `currencyCode=682`
-  - `amt` with 2 decimals (example `12.00`)
-  - `trackId` unique value
-  - `responseURL` and `errorURL` valid public HTTPS URLs
-- Resource key must match the same environment/credentials pair.
-- If you changed `.env`, run:
+**ARB acknowledgment:**
 
-```bash
-php artisan optimize:clear
+```json
+[{"status": "1"}]
 ```
 
-This package now retries once automatically without URL-encoding `trandata` when the gateway returns `IPAY0100013`.
+On processing failure:
+
+```json
+[{"status": "0"}]
+```
+
+---
+
+## Callback (customer UX only)
+
+Do not rely on the callback to update order status — use it to display a message to the user.
+
+```php
+Route::post('/api/payment/success', function (Request $request) {
+    $result = AlRajhiPayment::bankHosted()->handleResponse($request->all());
+    $paymentResult = AlRajhiPayment::bankHosted()->handleResponseData($result);
+
+    return response()->json(array_merge($paymentResult, [
+        'payment_status' => $paymentResult['status_final'] ?? 'unknown',
+        'confirmation' => [
+            'source' => 'callback',
+            'authoritative' => false,
+            'message' => 'UX only — update order via Webhook, not here',
+            'await_webhook' => true,
+        ],
+    ]));
+});
+
+Route::post('/api/payment/failed', function (Request $request) {
+    $result = AlRajhiPayment::bankHosted()->handleResponse($request->all());
+    $paymentResult = AlRajhiPayment::bankHosted()->handleResponseData($result);
+
+    return response()->json(array_merge($paymentResult, [
+        'payment_status' => $paymentResult['status_final'] ?? 'failed',
+        'confirmation' => [
+            'source' => 'callback',
+            'authoritative' => false,
+            'message' => 'UX only — update order via Webhook, not here',
+            'await_webhook' => true,
+        ],
+    ]));
+});
+```
+
+**Successful payment response:**
+
+```json
+{
+  "status_final": "success",
+  "bank_status": "CAPTURED",
+  "payment_status": "success",
+  "is_success": true,
+  "is_captured": true,
+  "payment_id": "600202616049354939",
+  "track_id": "TRK-20260609095147-9076",
+  "amount": "1.0",
+  "card_type": "MASTERCARD",
+  "result": "CAPTURED"
+}
+```
+
+**Failed payment response:**
+
+```json
+{
+  "status_final": "failed",
+  "bank_status": null,
+  "payment_status": "failed",
+  "is_success": false,
+  "is_captured": false,
+  "error_code": "IPAY0100260",
+  "error_text": "!ERROR!-IPAY0100260-Payment option(s) not enabled"
+}
+```
+
+---
+
+## Payment Statuses (ARB v1.31)
+
+| ARB `result` | Meaning | `payment_outcome` |
+|--------------|---------|-------------------|
+| `CAPTURED` | Successful purchase | `success` |
+| `APPROVED` | Successful authorization | `success` |
+| `NOT CAPTURED` | Failed purchase | `failure` |
+| `NOT APPROVED` | Failed authorization | `failure` |
+| `PROCESSING` | Manual MADA refund in progress | `pending` |
+| `VOIDED` | Void transaction | `voided` |
+| `DENIED BY RISK` | Risk system rejection | `failure` |
+| `HOST TIMEOUT` | Host timeout | `pending` |
+
+> **Note:** `actionCode` = transaction type (`1` purchase, `4` authorization) — **not** the payment result. Do not use it to determine whether a payment was successful.
+
+---
+
+## Payment Verification (Inquiry API — `action=8`)
+
+Use Inquiry for server-side verification when needed (e.g. if Webhook did not arrive). **Webhook remains the primary source** for order updates; Inquiry is for additional verification.
+
+### By `transId` (most common)
+
+```php
+use AlRajhi\PaymentGateway\Facades\AlRajhiPayment;
+
+$result = AlRajhiPayment::inquiry()->byTransId(
+    transId: '261601253202722',
+    amount: '1.00',
+    trackId: 'TRK-20260609095147-9076',
+);
+
+// $result['status_final'] === 'success' && $result['result'] === 'CAPTURED' → paid
+```
+
+### By `PaymentID`
+
+```php
+$result = AlRajhiPayment::inquiry()->byPaymentId(
+    paymentId: '600202616049354939',
+    amount: '1.00',
+    trackId: 'TRK-20260609095147-9076',
+);
+```
+
+### By `trackId`
+
+```php
+$result = AlRajhiPayment::inquiry()->byTrackId(
+    trackId: 'TRK-20260609095147-9076',
+    amount: '1.00',
+);
+```
+
+### Generic inquiry
+
+```php
+$result = AlRajhiPayment::inquiry()->inquire([
+    'amount' => '1.00',
+    'track_id' => 'TRK-20260609095147-9076',
+    'reference_type' => 'TRANID',   // TRANID | PaymentID | TrackID
+    'reference_id' => '261601253202722',
+    'customer_ip' => '203.0.113.10', // optional — inferred from current request
+]);
+```
+
+**Successful response:**
+
+```json
+{
+  "status_final": "success",
+  "bank_status": "CAPTURED",
+  "payment_status": "success",
+  "is_success": true,
+  "is_captured": true,
+  "payment_id": "600202616049354939",
+  "track_id": "TRK-20260609095147-9076",
+  "transId": "261601253202722",
+  "result": "CAPTURED",
+  "amount": "1.00"
+}
+```
+
+> **Notes:**
+> - `track_id` must match the value used in `initiate()`.
+> - `amount` must match the original transaction amount.
+> - Inquiry does not require `responseURL` / `errorURL` — the package does not send them.
+> - **Do not call Inquiry from success/failed pages** — use it in Jobs, Admin panels, or when Webhook is delayed.
+
+### Test API route
+
+```http
+POST /api/payment/inquiry
+Content-Type: application/json
+
+{
+  "reference_type": "TRANID",
+  "reference_id": "261601253202722",
+  "amount": "1.00",
+  "track_id": "TRK-20260609095147-9076"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "confirmation": {
+    "source": "inquiry",
+    "authoritative": true,
+    "use_case": "reconciliation_or_webhook_fallback",
+    "is_paid": true,
+    "message": "Verified with bank — payment is successful"
+  },
+  "data": { "status_final": "success", "result": "CAPTURED" }
+}
+```
+
+### Reconciliation job (example — if Webhook did not arrive within 5 minutes)
+
+```php
+// app/Jobs/ReconcilePendingPayment.php
+Payment::where('status', 'pending')
+    ->where('created_at', '<', now()->subMinutes(5))
+    ->each(function (Payment $payment) {
+        $result = AlRajhiPayment::inquiry()->byTrackId(
+            trackId: $payment->track_id,
+            amount: number_format($payment->amount, 2, '.', ''),
+        );
+
+        if (($result['status_final'] ?? null) === 'success') {
+            $payment->update(['status' => 'paid', 'confirmed_via' => 'inquiry']);
+        }
+    });
+```
+
+---
+
+## BIN Check
+
+```php
+$binData = AlRajhiPayment::binCheck('446404');
+// country, bank, card (MADA/Visa/MasterCard), status
+```
+
+---
+
+## Other Services
+
+```php
+AlRajhiPayment::bankHosted();      // Standard bank-hosted payment
+AlRajhiPayment::fasterCheckout();  // Faster Checkout
+AlRajhiPayment::iframe();          // iFrame (udf3 = iframe)
+AlRajhiPayment::applePay();        // Apple Pay
+AlRajhiPayment::webhook();         // Webhook processing
+AlRajhiPayment::inquiry();         // Inquiry API (action=8)
+AlRajhiPayment::binCheck('446404');
+```
+
+---
+
+## UDF Policy
+
+- Supports `udf1` through `udf10` (string, max 255 characters).
+- When `ALRAJHI_UDF_AUTO_FILL_DEFAULTS=true`, `udf1..udf5` are auto-filled.
+- For Capture operations (`action=5`): `udf7=R` is set automatically when enabled.
+- `udf10` for MADA Capture: `PARTIALCAPTURE` or `FINALCAPTURE`.
+
+---
+
+## Troubleshooting
+
+### `IPAY0100013` — Invalid transaction data
+
+- Verify `tranportal_id`, `password`, and `resource_key`.
+- Amount must use two decimal places: `1.00` not `1`.
+- `responseURL` and `errorURL` must be publicly accessible HTTPS URLs.
+- Use `currencyCode=682`.
+- After changing `.env`: run `php artisan optimize:clear`.
+- The package automatically retries without URL-encoding on this error.
+
+### `IPAY0100260` — Payment option(s) not enabled
+
+Terminal configuration in the ARB portal — enable Visa / Mastercard / MADA as needed.
+
+### Webhook not updating orders
+
+- Ensure ARB sends notifications to `/webhook` or `/alrajhi/webhook`.
+- Response must be `[{"status":"1"}]` not `{"status":"1"}`.
+- Check `payment_outcome`, not `actionCode`.
+
+---
+
+## Encryption
+
+- **Algorithm:** AES-256-CBC
+- **IV:** `PGKEYENCDECIVSPC`
+- **Key:** Resource Key from ARB
+- Requests and responses are encrypted/decrypted in the `trandata` field.
+
+---
+
+## License
+
+MIT — Yacoub Al-haidari

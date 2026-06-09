@@ -94,4 +94,45 @@ class PaymentPayloadBuilder implements PaymentPayloadBuilderContract
 
         return $payload;
     }
+
+    public function buildSupporting(array $data): array
+    {
+        $resolvedAmount = $data['amount'] ?? $data['amt'] ?? null;
+        $resolvedAction = $data['action'] ?? '8';
+        $resolvedCurrencyCode = $data['currency_code'] ?? $data['currencyCode'] ?? config('alrajhi.currency.default', '682');
+        $resolvedTrackId = $data['track_id'] ?? $data['trackId'] ?? null;
+        $resolvedPortalId = $data['id'] ?? config('alrajhi.credentials.tranportal_id');
+        $resolvedPortalPassword = $data['password'] ?? config('alrajhi.credentials.tranportal_password');
+
+        $payload = [
+            'id' => $resolvedPortalId,
+            'trandata' => [
+                'amt' => $resolvedAmount,
+                'action' => $resolvedAction,
+                'password' => $resolvedPortalPassword,
+                'id' => $resolvedPortalId,
+                'currencyCode' => $resolvedCurrencyCode,
+                'trackId' => $resolvedTrackId,
+            ],
+        ];
+
+        for ($index = 1; $index <= 10; $index++) {
+            if (isset($data["udf{$index}"])) {
+                $payload['trandata']["udf{$index}"] = $data["udf{$index}"];
+            }
+        }
+
+        $fieldMap = [
+            'trans_id' => 'transId',
+            'transId' => 'transId',
+        ];
+
+        foreach ($fieldMap as $inputKey => $gatewayKey) {
+            if (array_key_exists($inputKey, $data) && $data[$inputKey] !== null) {
+                $payload['trandata'][$gatewayKey] = $data[$inputKey];
+            }
+        }
+
+        return $payload;
+    }
 }

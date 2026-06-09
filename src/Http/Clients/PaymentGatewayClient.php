@@ -239,6 +239,153 @@ class PaymentGatewayClient
         );
     }
 
+    public function submitSupportingTransaction(array $data, string $customerIp): array
+    {
+        try {
+            $payload = $this->payloadBuilder->buildSupporting($data);
+            $plainTrandataArray = json_encode([$payload['trandata']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $plainTrandataObject = json_encode($payload['trandata'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+            if ($plainTrandataArray === false || $plainTrandataObject === false) {
+                throw new PaymentGatewayException('Failed to encode trandata payload', 'IPAY0100124');
+            }
+
+            try {
+                return $this->submitSupportingTransactionRequest($payload, $plainTrandataArray, $customerIp);
+            } catch (PaymentGatewayException $exception) {
+                if (! $this->isInvalidTransactionDataError($exception)) {
+                    throw $exception;
+                }
+
+                if ($this->shouldRetryWithoutUrlEncoding($exception)) {
+                    try {
+                        return $this->submitSupportingTransactionRequest($payload, $plainTrandataArray, $customerIp, false);
+                    } catch (PaymentGatewayException $retryException) {
+                        if (! $this->isInvalidTransactionDataError($retryException)) {
+                            throw $retryException;
+                        }
+                    }
+                }
+
+                try {
+                    return $this->submitSupportingTransactionRequest($payload, $plainTrandataObject, $customerIp);
+                } catch (PaymentGatewayException $objectException) {
+                    if (! $this->isInvalidTransactionDataError($objectException)) {
+                        throw $objectException;
+                    }
+
+                    if (! $this->shouldRetryWithoutUrlEncoding($objectException)) {
+                        throw $objectException;
+                    }
+
+                    return $this->submitSupportingTransactionRequest($payload, $plainTrandataObject, $customerIp, false);
+                }
+            }
+        } catch (RequestException $e) {
+            $rawErrorResponse = (string) ($e->getResponse()?->getBody()->getContents() ?? '');
+            $parsedError = $this->bodyParser->parse($rawErrorResponse);
+            $resolvedErrorCode = $this->valueResolver->first($parsedError, ['error', 'errorcode', 'code'])
+                ?? 'IPAY0100160';
+            $resolvedMessage = $this->valueResolver->first($parsedError, ['errorText', 'errortext', 'message'])
+                ?? ('Failed to submit supporting transaction: ' . $e->getMessage());
+
+            throw new PaymentGatewayException(
+                $resolvedMessage,
+                (string) $resolvedErrorCode,
+                (int) $e->getCode(),
+                $e,
+                [
+                    'http_status' => $e->getResponse()?->getStatusCode(),
+                    'response' => $parsedError,
+                ]
+            );
+        }
+    }
+
+    protected function submitSupportingTransactionRequest(
+        array $payload,
+        string $plainTrandata,
+        string $customerIp,
+        ?bool $urlEncodeBeforeEncrypt = null
+    ): array {
+        $encryptedTrandata = $this->encryption->encrypt($plainTrandata, $urlEncodeBeforeEncrypt);
+
+        $requestBody = [
+            'id' => $payload['id'],
+            'trandata' => $encryptedTrandata,
+        ];
+
+        $serverIp = request()?->server('SERVER_ADDR');
+        $headers = [
+            'X-FORWARDED-FOR' => $serverIp ? ($customerIp . ',' . $serverIp) : $customerIp,
+        ];
+
+        $response = $this->httpClient->post(
+            $this->config['endpoints'][$this->config['environment']]['payment_hosted']
+                ?? $this->config['endpoints'][$this->config['environment']]['payment_token']
+                ?? '',
+            [
+                'json' => [$requestBody],
+                'headers' => $headers,
+            ]
+        );
+
+        $rawBody = (string) $response->getBody()->getContents();
+        $responseBody = $this->bodyParser->parse($rawBody);
+
+        return $this->parseSupportingTransactionResponse($responseBody, $rawBody, $response->getStatusCode());
+    }
+
+    protected function parseSupportingTransactionResponse(
+        array $response,
+        string $rawBody = '',
+        ?int $httpStatus = null
+    ): array {
+        $entry = $this->resolvePrimaryEntry($response);
+        $status = $this->valueResolver->first($entry, ['status', 'resultStatus', 'resultstatus']);
+        $errorCode = $this->valueResolver->first($entry, ['error', 'errorCode', 'errorcode']);
+        $errorText = $this->valueResolver->first($entry, ['errorText', 'errortext', 'message']);
+        $trandata = $this->valueResolver->first($entry, ['trandata', 'trandata_encrypted']);
+        $tranId = $this->valueResolver->first($entry, ['tranid', 'transId', 'trans_id']);
+
+        if ($status === null && ($this->config['response']['strict_mode'] ?? false) === true) {
+            throw new PaymentGatewayException(
+                'Invalid response format from payment gateway',
+                'IPAY0100124',
+                0,
+                null,
+                [
+                    'http_status' => $httpStatus,
+                    'response' => $response,
+                    'raw_body' => $rawBody,
+                ]
+            );
+        }
+
+        if ($this->isSuccessfulStatus($status) || $trandata !== null) {
+            return [
+                'trandata' => $trandata,
+                'paymentId' => $tranId,
+                'error' => $errorCode,
+                'errorText' => $errorText,
+                'status' => $status,
+                'raw_response' => $entry,
+            ];
+        }
+
+        throw new PaymentGatewayException(
+            (string) ($errorText ?? 'Unknown error from payment gateway'),
+            (string) ($errorCode ?? 'IPAY0100124'),
+            0,
+            null,
+            [
+                'http_status' => $httpStatus,
+                'response' => $entry,
+                'raw_body' => $rawBody,
+            ]
+        );
+    }
+
     public function binCheck(string $bin): array
     {
         try {

@@ -47,10 +47,7 @@ class ResponseProcessor
             }
         }
 
-        $normalizedResult = $this->transactionStatusResolver->normalize($data['result'] ?? null);
-        $isSuccess = $this->transactionStatusResolver->isSuccessful($normalizedResult)
-            && ! $hasError
-            && ($data['status'] ?? null) !== '2';
+        $isSuccess = PaymentResultHelper::isSuccess($result);
 
         $statusFinal = $status['status_final'] ?? 'unknown';
         $bankStatus = $status['bank_status'] ?? null;
@@ -278,7 +275,29 @@ class ResponseProcessor
 
     protected function buildSuccessPayload(array $transactionData, array $gatewayResponseData = []): array
     {
-        return array_merge(['success' => true], $transactionData);
+        $payload = array_merge(['success' => true], $transactionData);
+
+        $topLevelKeys = [
+            'paymentId' => ['paymentId', 'paymentid', 'paymentID'],
+            'error' => ['error', 'Error'],
+            'errorText' => ['errorText', 'ErrorText', 'errortext'],
+        ];
+
+        foreach ($topLevelKeys as $canonical => $aliases) {
+            if (! empty($payload[$canonical])) {
+                continue;
+            }
+
+            foreach ($aliases as $alias) {
+                $value = $gatewayResponseData[$alias] ?? null;
+                if ($this->valueResolver->isNotNullish($value)) {
+                    $payload[$canonical] = $value;
+                    break;
+                }
+            }
+        }
+
+        return $payload;
     }
 
     protected function buildDirectTransactionData(array $data): ?array
