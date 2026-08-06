@@ -1,9 +1,9 @@
 {
-    "name": "alrajhi/payment-gateway",
-    "description": "Clean Laravel package for Al Rajhi Bank Payment Gateway - Bank Hosted Integration Only",
+    "name": "yacoubalhaidari/alrajhi-payment-gateway",
+    "description": "Unofficial Laravel integration for Al Rajhi Bank Payment Gateway — Bank Hosted API only",
     "type": "library",
     "license": "MIT",
-    "keywords": ["laravel", "alrajhi", "payment", "bank-hosted", "gateway", "api-only"],
+    "keywords": ["laravel", "alrajhi", "payment", "bank-hosted", "gateway", "api-only", "unofficial"],
     "authors": [
         {
             "name": "Yacoub Al-haidari",

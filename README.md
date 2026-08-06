@@ -1,8 +1,22 @@
-![alt text](1.png)
+# Unofficial Laravel Integration for Al Rajhi Bank Payment Gateway
 
-# AlRajhi Payment Gateway (Laravel Package)
+> [!IMPORTANT]
+> This is an independent, unofficial open-source Laravel package.
+> It is not affiliated with, endorsed by, sponsored by, or maintained by Al Rajhi Bank.
+> “Al Rajhi Bank” and its related trademarks belong to their respective owners.
+> This package is intended only for merchants who have valid payment-gateway credentials issued through the bank’s official channels.
+> Card details are entered on the bank’s hosted payment page — never on a page owned by this package.
 
-Laravel package for integrating with Al Rajhi Bank payment gateway — compatible with **ARB Merchant Integration Guide REST v1.31**.
+> [!تنبيه]
+> هذه مكتبة Laravel مستقلة وغير رسمية ومفتوحة المصدر.
+> لا تتبع مصرف الراجحي، ولم يتم اعتمادها أو رعايتها أو تطويرها من قِبل المصرف.
+> جميع الأسماء والعلامات التجارية المرتبطة بالمصرف مملوكة لأصحابها.
+> المكتبة مخصصة للتجار الذين يمتلكون بيانات ربط صالحة صادرة عبر القنوات الرسمية للمصرف.
+> إدخال بيانات البطاقة يتم في صفحة الدفع التابعة للمصرف، وليس داخل أي صفحة تابعة لهذه المكتبة.
+
+Laravel package for integrating with Al Rajhi Bank payment gateway (ARB Merchant Integration Guide REST v1.31) — **Bank Hosted flow only**.
+
+> **Migrating from `alrajhi/payment-gateway`?** Use the new package name below. After publishing the successor on Packagist, abandon the old package and point it to `yacoubalhaidari/alrajhi-payment-gateway`.
 
 ---
 
@@ -26,7 +40,7 @@ Laravel package for integrating with Al Rajhi Bank payment gateway — compatibl
 ## Installation
 
 ```bash
-composer require alrajhi/payment-gateway
+composer require yacoubalhaidari/alrajhi-payment-gateway
 php artisan vendor:publish --tag=alrajhi-config
 ```
 
@@ -65,6 +79,8 @@ ALRAJHI_CAPTURE_AUTO_SET_UDF7_R=true
 
 ## Initiate Payment (Bank Hosted)
 
+The customer is redirected to the **bank’s hosted payment page** to enter card details. This package never collects card numbers, CVV, or passwords.
+
 ```php
 use AlRajhi\PaymentGateway\Facades\AlRajhiPayment;
 use Illuminate\Http\Request;
@@ -93,19 +109,19 @@ Route::post('/test-payment', function (Request $request) {
 });
 ```
 
-**Successful response:**
+**Example successful response:**
 
 ```json
 {
   "success": true,
-  "payment_id": "600202616049354939",
+  "payment_id": "600000000000000001",
   "payment_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm",
-  "redirect_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm?PaymentID=600202616049354939",
-  "track_id": "TRK-20260609095147-9076"
+  "redirect_url": "https://securepayments.alrajhibank.com.sa/pg/paymentpage.htm?PaymentID=600000000000000001",
+  "track_id": "TRK-EXAMPLE-0001"
 }
 ```
 
-Redirect the customer to `redirect_url` to complete payment.
+Redirect the customer to `redirect_url` to complete payment on the bank’s page.
 
 ---
 
@@ -113,7 +129,7 @@ Redirect the customer to `redirect_url` to complete payment.
 
 ```
 1. initiate()          → Get redirect_url
-2. Customer pays       → On ARB payment page
+2. Customer pays       → On ARB payment page (card data stays with the bank)
 3. Callback            → UX only — do NOT finalize DB updates here
 4. Webhook             → Update order in database (source of truth)
 5. Inquiry (action=8)  → Server-side fallback (if Webhook is delayed or for reconciliation)
@@ -124,7 +140,7 @@ Redirect the customer to `redirect_url` to complete payment.
 | Stage | When does it happen? | Update DB? | Role |
 |-------|----------------------|------------|------|
 | **Callback** (`success` / `failed`) | When customer returns from ARB page | ❌ No | Show message to user only |
-| **Webhook** | Usually before or after callback (async) | ✅ **Yes — here** | Official source of truth |
+| **Webhook** | Usually before or after callback (async) | ✅ **Yes — here** | Authoritative source of truth |
 | **Inquiry** | On demand from server (Job / Admin) | ✅ Yes (fallback) | If Webhook is missing or for reconciliation |
 
 > **Do not call Inquiry on every success/failed callback** — it slows the page and duplicates what Webhook already does.  
@@ -253,9 +269,9 @@ Route::post('/api/payment/failed', function (Request $request) {
 });
 ```
 
-### Real callback response examples
+### Example callback responses
 
-These are actual responses from `POST /api/payment/success` after processing with `handleResponse()` + `handleResponseData()`.
+Illustrative shapes returned after `handleResponse()` + `handleResponseData()`. IDs below are **examples only**.
 
 #### ✅ Successful payment (`CAPTURED`)
 
@@ -264,8 +280,8 @@ These are actual responses from `POST /api/payment/success` after processing wit
   "status_final": "success",
   "system_status": "success",
   "bank_status": "CAPTURED",
-  "transId": 261601331202919,
-  "date": "0609",
+  "transId": 100000000000001,
+  "date": "0101",
   "udf1": "",
   "udf2": "",
   "udf3": "",
@@ -275,7 +291,7 @@ These are actual responses from `POST /api/payment/success` after processing wit
   "authCode": "000000",
   "custid": null,
   "actionCode": "1",
-  "ref": "616094017404",
+  "ref": "100000000001",
   "result": "CAPTURED",
   "status": null,
   "is_success": true,
@@ -287,8 +303,8 @@ These are actual responses from `POST /api/payment/success` after processing wit
   "is_voided": false,
   "error_code": null,
   "error_text": null,
-  "payment_id": "600202616099491275",
-  "track_id": "TRK-20260609103015-9910",
+  "payment_id": "600000000000000001",
+  "track_id": "TRK-EXAMPLE-0001",
   "amount": "1.0",
   "card_type": "MASTERCARD",
   "card": "510510XXXXXX5100",
@@ -332,8 +348,8 @@ Customer did not complete card authentication (3DS). `bank_status` is `null` and
   "is_voided": false,
   "error_code": "IPAY0100357",
   "error_text": "!ERROR!-IPAY0100357-NOT AUTHENTICATED",
-  "payment_id": "600202616099692365",
-  "track_id": "TRK-20260609102333-4086",
+  "payment_id": "600000000000000002",
+  "track_id": "TRK-EXAMPLE-0002",
   "amount": "1.0",
   "card_type": "VISA",
   "card": null,
@@ -375,8 +391,8 @@ Terminal configuration issue in the ARB merchant portal — enable Visa / Master
   "is_voided": false,
   "error_code": "IPAY0100260",
   "error_text": "!ERROR!-IPAY0100260-Payment option(s) not enabled",
-  "payment_id": "600202616000417166",
-  "track_id": "TRK-20260609102712-8561",
+  "payment_id": "600000000000000003",
+  "track_id": "TRK-EXAMPLE-0003",
   "amount": "1.0",
   "card_type": null,
   "card": null,
@@ -423,9 +439,9 @@ Use Inquiry for server-side verification when needed (e.g. if Webhook did not ar
 use AlRajhi\PaymentGateway\Facades\AlRajhiPayment;
 
 $result = AlRajhiPayment::inquiry()->byTransId(
-    transId: '261601253202722',
+    transId: '100000000000001',
     amount: '1.00',
-    trackId: 'TRK-20260609095147-9076',
+    trackId: 'TRK-EXAMPLE-0001',
 );
 
 // $result['status_final'] === 'success' && $result['result'] === 'CAPTURED' → paid
@@ -435,9 +451,9 @@ $result = AlRajhiPayment::inquiry()->byTransId(
 
 ```php
 $result = AlRajhiPayment::inquiry()->byPaymentId(
-    paymentId: '600202616049354939',
+    paymentId: '600000000000000001',
     amount: '1.00',
-    trackId: 'TRK-20260609095147-9076',
+    trackId: 'TRK-EXAMPLE-0001',
 );
 ```
 
@@ -445,7 +461,7 @@ $result = AlRajhiPayment::inquiry()->byPaymentId(
 
 ```php
 $result = AlRajhiPayment::inquiry()->byTrackId(
-    trackId: 'TRK-20260609095147-9076',
+    trackId: 'TRK-EXAMPLE-0001',
     amount: '1.00',
 );
 ```
@@ -455,14 +471,14 @@ $result = AlRajhiPayment::inquiry()->byTrackId(
 ```php
 $result = AlRajhiPayment::inquiry()->inquire([
     'amount' => '1.00',
-    'track_id' => 'TRK-20260609095147-9076',
+    'track_id' => 'TRK-EXAMPLE-0001',
     'reference_type' => 'TRANID',   // TRANID | PaymentID | TrackID
-    'reference_id' => '261601253202722',
+    'reference_id' => '100000000000001',
     'customer_ip' => '203.0.113.10', // optional — inferred from current request
 ]);
 ```
 
-**Successful response:**
+**Example successful response:**
 
 ```json
 {
@@ -471,9 +487,9 @@ $result = AlRajhiPayment::inquiry()->inquire([
   "payment_status": "success",
   "is_success": true,
   "is_captured": true,
-  "payment_id": "600202616049354939",
-  "track_id": "TRK-20260609095147-9076",
-  "transId": "261601253202722",
+  "payment_id": "600000000000000001",
+  "track_id": "TRK-EXAMPLE-0001",
+  "transId": "100000000000001",
   "result": "CAPTURED",
   "amount": "1.00"
 }
@@ -493,9 +509,9 @@ Content-Type: application/json
 
 {
   "reference_type": "TRANID",
-  "reference_id": "261601253202722",
+  "reference_id": "100000000000001",
   "amount": "1.00",
-  "track_id": "TRK-20260609095147-9076"
+  "track_id": "TRK-EXAMPLE-0001"
 }
 ```
 
@@ -598,6 +614,10 @@ Terminal configuration in the ARB portal — enable Visa / Mastercard / MADA as 
 - Requests and responses are encrypted/decrypted in the `trandata` field.
 
 ---
+
+## Disclaimer
+
+This package is an independent community project by Yacoub Al-haidari. It is provided “as is” under the MIT license. Always obtain credentials and integration approval through Al Rajhi Bank’s official merchant channels.
 
 ## License
 
